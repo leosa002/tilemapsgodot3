@@ -3,7 +3,7 @@ extends "_single.gd"
 const Iterators = preload("../iterators.gd")
 const Algorithms = preload("../algorithms.gd")
 
-var __line: PoolVector2Array = PoolVector2Array([Vector2.ZERO])
+var __line: PoolVector2Array = PoolVector2Array([])
 var __painted_cells: Dictionary
 
 func _init(paper: Paper, pattern_layout_map: PatternLayoutMap, selection_map: TileMap = null, paint_immediately_on_pushed: bool = true, paint_invalid_cell: bool = false) \
@@ -30,10 +30,14 @@ func _on_moved(previous_position: Vector2, previous_pattern_grid_position_cell: 
 			var previous_position_map_cell: Vector2 = _pattern_layout_map.world_to_map(previous_position)
 			if position_map_cell != previous_position_map_cell:
 				__line = Algorithms.get_line(previous_position_map_cell, position_map_cell, _pattern_layout_map.cell_half_offset)
+				if random_tile_mode:
+					__line.remove(0)
 				paint()
 		else:
 			if previous_pattern_grid_position_cell != _pattern_grid_position_cell:
 				__line = Iterators.line(previous_pattern_grid_position_cell, _pattern_grid_position_cell).to_array()
+				if random_tile_mode:
+					__line.remove(0)
 				paint()
 
 func _on_paint() -> void:

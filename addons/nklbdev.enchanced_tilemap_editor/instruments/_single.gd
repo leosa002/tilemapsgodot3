@@ -9,6 +9,10 @@ var _settings: Common.Settings
 
 var _paper: Paper
 var _pattern_layout_map: PatternLayoutMap
+var __pattern: Patterns.Pattern
+var _pattern_used_cells: Array
+var _pattern_size: Vector2
+var _pattern_cells_count: int
 var _selection_map: TileMap
 var _paint_immediately_on_pushed: bool
 var __paint_deferred: bool
@@ -19,6 +23,8 @@ var _lines_count_in_pattern: int
 var _random_number_generator: RandomNumberGenerator
 var _stroke_seed: int
 var random_tile_mode: bool setget __set_random_tile_mode
+var allow_random_tile_mode_repetition: bool = false
+var last_random_tile: int = -1
 
 # updating on instrument moved data
 var _pattern_grid_origin_map_cell: Vector2
@@ -49,6 +55,9 @@ func _init(paper: Paper, pattern_layout_map: PatternLayoutMap, selection_map: Ti
 	_paper.connect("tile_map_settings_changed", self, "__update_cached_data")
 	_paper.connect("tile_set_settings_changed", self, "__update_cached_data")
 	_pattern_layout_map = pattern_layout_map
+	__pattern = null
+	if pattern_layout_map != null:
+		__pattern = pattern_layout_map.pattern
 	_pattern_layout_map.connect("layout_changed", self, "__update_cached_data")
 	_selection_map = selection_map
 	_paint_immediately_on_pushed = paint_immediately_on_pushed
@@ -68,25 +77,26 @@ func __on_paper_tile_set_settings_changed() -> void:
 	pass
 
 func __update_cached_data() -> void:
-	# if __pattern != __pattern_holder.value:
-	# 	if __pattern:
-	# 		__pattern.disconnect("changed", self, "__on_pattern_changed")
-	# 		_pattern_used_cells.resize(0)
-	# 	__pattern = __pattern_holder.value
-	# 	if __pattern:
-	# 		__pattern.connect("changed", self, "__on_pattern_changed")
-	# 		for cell in __pattern.cells.keys():
-	# 			if __pattern.cells[cell][0] >= 0:
-	# 				_pattern_used_cells.append(cell)
-	# _pattern_size = (Vector2.ONE if random_tile_mode else __pattern.size) if __pattern else Vector2.ZERO
-	# _pattern_cells_count = (1 if random_tile_mode else __pattern.cells.size()) if __pattern else 0
-	# _lines_count_in_pattern = (1 if random_tile_mode else _pattern_layout_map.cell_half_offset_type.conv(_pattern_size).y) if __pattern else 0
+	_pattern_used_cells.resize(0)
+	if __pattern != _pattern_layout_map.pattern:
+		if __pattern:
+			__pattern.disconnect("changed", self, "__on_pattern_changed")
+			_pattern_used_cells.resize(0)
+		__pattern = _pattern_layout_map.pattern
+		if __pattern:
+			__pattern.connect("changed", self, "__on_pattern_changed")
+			for cell in __pattern.cells.keys():
+				if __pattern.cells[cell][0] >= 0:
+					_pattern_used_cells.append(cell)
+	_pattern_size = (Vector2.ONE if random_tile_mode else __pattern.size) if __pattern else Vector2.ZERO
+	_pattern_cells_count = (1 if random_tile_mode else __pattern.cells.size()) if __pattern else 0
+	_lines_count_in_pattern = (1 if random_tile_mode else _pattern_layout_map.cell_half_offset_type.conv(_pattern_size).y) if __pattern else 0
 	pass
 
 func _set_origin(value: Vector2) -> void:
 	._set_origin(value)
 	
-	var pattern_grid_origin_map_cell = _pattern_layout_map.get_origin_map_cell(_origin)
+	var pattern_grid_origin_map_cell = (_pattern_layout_map.world_to_map(_origin) if random_tile_mode else _pattern_layout_map.get_origin_map_cell(_origin)) if __pattern else _pattern_layout_map.get_origin_map_cell(_origin)
 
 	if pattern_grid_origin_map_cell != _pattern_grid_origin_map_cell:
 		_pattern_grid_origin_map_cell = pattern_grid_origin_map_cell
@@ -137,7 +147,7 @@ func move_to(position: Vector2) -> void:
 	var previous_pattern_grid_position_cell: Vector2 = _pattern_grid_position_cell
 	.move_to(position)
 	if _is_pushed:
-		_pattern_grid_position_cell = ((_position - _pattern_grid_origin_position) / _pattern_layout_map.pattern_size).floor()
+		_pattern_grid_position_cell = ((_position - _pattern_grid_origin_position) / _pattern_size).floor()
 	_on_moved(previous_position, previous_pattern_grid_position_cell)
 
 func process_input_event_key(event: InputEventKey) -> bool:
@@ -172,7 +182,7 @@ func draw(overlay: Control) -> void:
 				overlay.draw_multiline(__CELL_LINES, grid_color)
 
 	# Draw pattern grid
-	var pattern_size: Vector2 = _pattern_layout_map.pattern_size
+	var pattern_size: Vector2 = _pattern_size
 	if pattern_size != Vector2.ONE:
 		current_cell = _pattern_grid_position_cell
 		grid_color = _settings.pattern_grid_color
@@ -212,7 +222,7 @@ func can_paint_at(map_cell: Vector2) -> bool:
 		_selection_map.get_cellv(map_cell) == 0
 
 func paint_pattern_at(pattern_grid_cell: Vector2) -> void:
-	if _pattern_layout_map.pattern_size == Vector2.ONE:
+	if _pattern_size == Vector2.ONE:
 		var map_cell: Vector2 = _pattern_grid_origin_map_cell + pattern_grid_cell
 		if can_paint_at(map_cell):
 			paint_pattern_cell_at(map_cell)
@@ -220,7 +230,7 @@ func paint_pattern_at(pattern_grid_cell: Vector2) -> void:
 		var pattern_offset_in_grid_cell: Vector2 = _pattern_layout_map.map_to_world(pattern_grid_cell) - pattern_grid_cell
 		var pattern_position: Vector2 = \
 			_pattern_grid_origin_map_cell_position + \
-			pattern_grid_cell * _pattern_layout_map.pattern_size + \
+			pattern_grid_cell * _pattern_size + \
 			pattern_offset_in_grid_cell
 		for pattern_cell in _pattern_layout_map.cells_data.keys():
 			var pattern_cell_position: Vector2 = pattern_position + _pattern_layout_map.map_to_world(pattern_cell)
@@ -231,15 +241,33 @@ func paint_pattern_at(pattern_grid_cell: Vector2) -> void:
 func paint_pattern_cell_at(map_cell: Vector2) -> void:
 	var map_cell_position: Vector2 = _pattern_layout_map.map_to_world(map_cell)
 	var map_cell_position_on_layout: Vector2 = map_cell_position - _pattern_grid_origin_map_cell_position
-	var layout_cell: Vector2 = _pattern_layout_map.world_to_map(map_cell_position_on_layout).posmodv(_pattern_layout_map.layout_size)
-	var data: PoolIntArray = Common.get_map_cell_data(_pattern_layout_map, layout_cell)
+	#This chooses what tile to paint.
+	var layout_cell: Vector2
+	var data: PoolIntArray
+	if random_tile_mode and __pattern:
+		var amount_of_cells_in_pattern: int = __pattern.cells.keys().size()
+		var random_cell_index: int = _random_number_generator.randi_range(0, amount_of_cells_in_pattern - 1)
+		while (not allow_random_tile_mode_repetition) and __pattern.cells.keys().size() > 1 and last_random_tile != -1 and random_cell_index == last_random_tile:
+			random_cell_index = _random_number_generator.randi_range(0, amount_of_cells_in_pattern - 1)
+		
+		var random_cell = __pattern.cells[__pattern.cells.keys()[random_cell_index]]
+		
+		last_random_tile = random_cell_index
+		
+		layout_cell = _pattern_layout_map.world_to_map(map_cell_position_on_layout).posmodv(Vector2.ONE)
+		data = random_cell
+		
+	else:
+		layout_cell = _pattern_layout_map.world_to_map(map_cell_position_on_layout).posmodv(_pattern_layout_map.layout_size)
+		data = Common.get_map_cell_data(_pattern_layout_map, layout_cell)
+		
 	if _paint_invalid_cell or data[0] >= 0:
 		if data[0] == -2:
 			data[0] = -1
 		_paper.set_map_cell_data(map_cell, data)
 
 func draw_pattern_hint_at(overlay: Control, pattern_grid_cell: Vector2) -> void:
-	var pattern_size: Vector2 = _pattern_layout_map.pattern_size
+	var pattern_size: Vector2 = _pattern_size
 	var pattern_position: Vector2 = _pattern_grid_origin_map_cell_position + \
 		_pattern_layout_map.map_to_world(pattern_grid_cell * pattern_size)
 	var cell: Vector2
